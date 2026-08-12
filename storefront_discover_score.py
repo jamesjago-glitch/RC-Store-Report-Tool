@@ -264,7 +264,9 @@ UA = (
     "StorefrontIndexBot/0.1 (+benchmark; contact rainycityagency.com)"
 )
 HEADERS = {"User-Agent": UA, "Accept-Language": "en-GB,en;q=0.9"}
-TIMEOUT = 20
+# (connect, read) timeout. Short, so dead/slow domains fail fast during the
+# high-volume discovery sweep instead of tying up a worker for 20s each.
+TIMEOUT = (5, 9)
 
 
 def _get(url: str, **kw):
@@ -839,11 +841,12 @@ def render_table_text(rows: list[list[str]]) -> str:
 
 # ===== render.py =====
 """
-Render the benchmark to a single self-contained HTML dashboard: the public
-"State of Shopify Storefronts" leaderboard, filterable by sector, with each
-store's six-dimension breakdown and the upgrade/migrate flags for Shopify's reps.
+Render the benchmark to a single self-contained HTML dashboard, styled to the
+Rainy City brand system (Instrument Serif headings, DM Mono body, Electric Blue
+primary, Warm Amber complement, light surfaces). Co-branded Rainy City x Shopify.
 
-No external assets, no browser storage. Opens anywhere.
+No browser storage. Opens anywhere (fonts load from Google Fonts when online,
+with system fallbacks).
 """
 
 from jinja2 import Environment, BaseLoader
@@ -859,71 +862,103 @@ TEMPLATE = r"""<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>The State of Shopify Storefronts — {{ meta.quarter }}</title>
 <style>
+  @import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Mono:wght@400;500&display=swap');
   :root{
-    --ink:#151b23; --muted:#5c6773; --line:#e7eaee; --bg:#f6f7f9; --card:#fff;
-    --accent:#f0531c; --good:#1f8a4c; --mid:#c9992b; --bad:#c0392b; --plus:#5a3ec8;
-    --shopify:#5a863e;
+    --blue:#2563EB; --blue-hover:#1D4ED8; --blue-active:#1E40AF;
+    --blue-light:#DBEAFE; --blue-muted:#93C5FD; --blue-subtle:#EFF6FF;
+    --amber:#D97706; --amber-light:#FEF3C7; --amber-subtle:#FFFBEB; --amber-active:#B45309;
+    --green:#16A34A; --green-subtle:#E7F6ED; --red:#DC2626; --red-subtle:#FDECEA;
+    --ink:#0A0F1A; --navy:#1B2E5C; --body:#4A5568; --muted:#6B7686;
+    --bg:#FAFBFC; --bg-2:#F0F2F5; --card:#FFFFFF; --line:#E6E9EF; --inverse:#0A0F1A;
+    --serif:'Instrument Serif', Georgia, 'Times New Roman', serif;
+    --mono:'DM Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   }
   *{box-sizing:border-box}
-  body{margin:0;font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:var(--ink);background:var(--bg)}
-  .wrap{max-width:1180px;margin:0 auto;padding:28px 20px 64px}
-  header.top{display:flex;justify-content:space-between;align-items:flex-end;gap:20px;flex-wrap:wrap;border-bottom:2px solid var(--ink);padding-bottom:16px;margin-bottom:22px}
-  .brandmark{font-weight:700;letter-spacing:.02em}
-  .brandmark .dot{color:var(--accent)}
-  h1{font-size:30px;line-height:1.15;margin:6px 0 4px;font-weight:700}
-  .sub{color:var(--muted);max-width:640px}
-  .co{font-size:12px;text-transform:uppercase;letter-spacing:.12em;color:var(--muted)}
-  .stats{display:flex;gap:14px;flex-wrap:wrap;margin:22px 0}
-  .stat{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;min-width:140px}
-  .stat .n{font-size:26px;font-weight:700}
-  .stat .l{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.06em}
-  .controls{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:8px 0 14px}
-  select,input[type=search]{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#fff}
-  table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden}
-  th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);font-size:14px}
-  th{background:#fbfcfd;cursor:pointer;user-select:none;white-space:nowrap;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+  body{margin:0;font-family:var(--mono);font-size:14px;line-height:1.6;color:var(--body);background:var(--bg);-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1200px;margin:0 auto;padding:40px 24px 72px}
+  a{color:var(--blue);text-decoration:none}
+  :focus-visible{outline:2px solid var(--blue);outline-offset:3px;border-radius:4px}
+
+  header.top{display:flex;justify-content:space-between;align-items:flex-end;gap:24px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:24px;margin-bottom:28px}
+  .lockup{display:flex;align-items:center;gap:9px;color:var(--ink)}
+  .lockup svg{width:26px;height:21px;display:block}
+  .wordmark{font-family:var(--serif);font-size:26px;line-height:1;letter-spacing:.01em}
+  .cobrand{font-family:var(--mono);font-size:12px;color:var(--muted);margin-left:2px}
+  .overline{font-family:var(--mono);font-size:11px;font-weight:500;letter-spacing:.14em;text-transform:uppercase;color:var(--blue);background:var(--blue-subtle);display:inline-block;padding:4px 10px;border-radius:99px;margin:18px 0 10px}
+  h1{font-family:var(--serif);font-weight:400;font-size:44px;line-height:1.05;margin:6px 0 8px;color:var(--ink);letter-spacing:.005em}
+  .sub{color:var(--body);max-width:680px;font-size:14px}
+  .meta-right{font-family:var(--mono);font-size:12px;color:var(--muted);text-align:right}
+
+  .stats{display:flex;gap:14px;flex-wrap:wrap;margin:26px 0 20px}
+  .stat{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 18px;min-width:150px;box-shadow:0 1px 2px rgba(10,15,26,.04)}
+  .stat .n{font-family:var(--serif);font-size:34px;line-height:1;color:var(--ink)}
+  .stat .l{color:var(--muted);font-size:11px;letter-spacing:.06em;text-transform:uppercase;margin-top:6px}
+
+  .controls{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin:10px 0 16px}
+  label{font-size:12px;color:var(--muted)}
+  select,input[type=search]{font-family:var(--mono);font-size:13px;padding:9px 11px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);min-height:40px}
+  .legend{font-family:var(--mono);font-size:12px;color:var(--muted)}
+
+  table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:0 1px 2px rgba(10,15,26,.04)}
+  th,td{padding:11px 13px;text-align:left;border-bottom:1px solid var(--line);font-size:13px}
+  th{background:#fff;cursor:pointer;user-select:none;white-space:nowrap;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--navy);font-weight:500}
   th.num,td.num{text-align:right}
+  tbody tr:nth-child(even){background:#FCFCFD}
+  tbody tr:hover{background:var(--blue-subtle)}
   tr:last-child td{border-bottom:none}
-  .rankcell{font-weight:700;width:44px}
-  .brand{font-weight:600}
-  .dom{color:var(--muted);font-size:12px}
-  .score{font-weight:700;font-size:15px}
-  .bar{position:relative;height:8px;background:#eef0f3;border-radius:99px;min-width:64px}
-  .bar > span{position:absolute;left:0;top:0;bottom:0;border-radius:99px;background:var(--accent)}
-  .dimcell{min-width:76px}
-  .dimval{font-size:11px;color:var(--muted);margin-bottom:3px}
-  .dimval .pct{font-size:10px;opacity:.7}
-  .dimcell.q1 .bar > span{background:var(--bad)}
-  .dimcell.q2 .bar > span{background:var(--mid)}
-  .dimcell.q3 .bar > span{background:#3e78c8}
-  .dimcell.q4 .bar > span{background:var(--good)}
-  .flag{display:inline-block;font-size:11px;font-weight:600;padding:2px 7px;border-radius:99px;white-space:nowrap}
-  .flag.migrate{background:#fdece9;color:var(--bad)}
-  .flag.upgrade{background:#efeafb;color:var(--plus)}
-  .flag.plus{background:#eaf3ea;color:var(--shopify)}
-  .mv-up{color:var(--good);font-weight:600}
-  .mv-down{color:var(--bad);font-weight:600}
+  .rankcell{font-weight:500;width:44px;color:var(--navy)}
+  .brand{font-weight:500;color:var(--ink)}
+  .dom{color:var(--muted);font-size:11px}
+  .score{font-family:var(--serif);font-weight:400;font-size:20px;color:var(--ink)}
+  .bar{position:relative;height:7px;background:var(--bg-2);border-radius:99px;min-width:64px}
+  .bar > span{position:absolute;left:0;top:0;bottom:0;border-radius:99px;background:var(--blue)}
+  .dimcell{min-width:80px}
+  .dimval{font-size:11px;color:var(--muted);margin-bottom:4px}
+  .dimval .pct{font-size:10px;opacity:.75}
+  .dimcell.q1 .bar > span{background:var(--red)}
+  .dimcell.q2 .bar > span{background:var(--amber)}
+  .dimcell.q3 .bar > span{background:var(--blue)}
+  .dimcell.q4 .bar > span{background:var(--green)}
+  .flag{display:inline-block;font-size:11px;font-weight:500;padding:3px 9px;border-radius:99px;white-space:nowrap}
+  .flag.migrate{background:var(--amber-subtle);color:var(--amber-active)}
+  .flag.upgrade{background:var(--blue-subtle);color:var(--blue-active)}
+  .flag.plus{background:var(--green-subtle);color:var(--green)}
+  .mv-up{color:var(--green);font-weight:500}
+  .mv-down{color:var(--red);font-weight:500}
   .mv-flat{color:var(--muted)}
-  footer{margin-top:26px;color:var(--muted);font-size:12px}
-  .legend{margin:10px 0 0;color:var(--muted);font-size:12px}
-  .weightbar{display:flex;gap:0;height:22px;border-radius:6px;overflow:hidden;max-width:520px;margin-top:6px;border:1px solid var(--line)}
-  .weightbar div{font-size:10px;color:#fff;display:flex;align-items:center;justify-content:center}
+
+  footer{margin-top:30px;color:var(--muted);font-size:12px}
+  footer h3{font-family:var(--serif);font-weight:400;font-size:18px;color:var(--ink);margin:0 0 8px}
+  .weightbar{display:flex;gap:0;height:24px;border-radius:8px;overflow:hidden;max-width:560px;margin-top:6px;border:1px solid var(--line)}
+  .weightbar div{font-size:10px;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:500}
+  .method{max-width:760px;line-height:1.7;margin-top:14px}
+  .prepared{display:flex;align-items:center;gap:8px;margin-top:20px;color:var(--muted)}
+  .prepared svg{width:18px;height:15px;color:var(--ink)}
 </style></head>
 <body><div class="wrap">
   <header class="top">
     <div>
-      <div class="co">Rainy City <span class="brandmark"><span class="dot">●</span></span> × Shopify</div>
-      <h1>The State of Shopify Storefronts</h1>
-      <div class="sub">How {{ meta.n_scored }} mid-market DTC storefronts perform across six dimensions of the buying experience. {{ meta.quarter }}.</div>
+      <div class="lockup">
+        <svg viewBox="0 0 40 32" aria-hidden="true">
+          <path fill="currentColor" d="M11 1s6 7 6 11a6 6 0 1 1-12 0C5 8 11 1 11 1Z"/>
+          <path fill="currentColor" d="M29 1s6 7 6 11a6 6 0 1 1-12 0C23 8 29 1 29 1Z"/>
+          <path fill="currentColor" d="M20 15s6 7 6 11a6 6 0 1 1-12 0C14 22 20 15 20 15Z"/>
+        </svg>
+        <span class="wordmark">rainy city</span>
+        <span class="cobrand">× Shopify</span>
+      </div>
+      <div class="overline">The State of Shopify Storefronts</div>
+      <h1>Six dimensions of the buying experience</h1>
+      <div class="sub">How {{ meta.n_scored }} mid-market storefronts perform across speed, friction, trust, upsell, added value and UX. {{ meta.quarter }}.</div>
     </div>
-    <div class="co">Benchmark<br>{{ meta.generated }}</div>
+    <div class="meta-right">Benchmark<br>{{ meta.generated }}</div>
   </header>
 
   <div class="stats">
     <div class="stat"><div class="n">{{ meta.n_scored }}</div><div class="l">Stores ranked</div></div>
     <div class="stat"><div class="n">{{ meta.n_sectors }}</div><div class="l">Sectors</div></div>
-    <div class="stat"><div class="n">{{ meta.n_migrate }}</div><div class="l">Non-Shopify (migrate)</div></div>
-    <div class="stat"><div class="n">{{ meta.n_upgrade }}</div><div class="l">Non-Plus (upgrade)</div></div>
+    <div class="stat"><div class="n">{{ meta.n_migrate }}</div><div class="l">Non-Shopify · migrate</div></div>
+    <div class="stat"><div class="n">{{ meta.n_upgrade }}</div><div class="l">Non-Plus · upgrade</div></div>
     <div class="stat"><div class="n">{{ meta.median }}</div><div class="l">Median score</div></div>
   </div>
 
@@ -940,8 +975,8 @@ TEMPLATE = r"""<!doctype html>
         {% for c in countries %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
       </select>
     </label>
-    <input type="search" id="q" placeholder="Search brand…">
-    <span class="legend">Composite = weighted mean of six dimensions. Dimension % = sector percentile; bar colour = quartile vs sector. Click a column to sort.</span>
+    <input type="search" id="q" placeholder="Search brand…" aria-label="Search brand">
+    <span class="legend">Composite = weighted mean of six dimensions. Dimension % = sector percentile; bar colour = quartile vs sector.</span>
   </div>
 
   <table id="tbl"><thead><tr>
@@ -987,13 +1022,21 @@ TEMPLATE = r"""<!doctype html>
   </tbody></table>
 
   <footer>
-    <div><strong>Weighting</strong> (composite score):</div>
+    <h3>Weighting</h3>
     <div class="weightbar">
       {% for d, w in weights.items() %}
         <div style="width:{{ (w*100)|round(0,'floor') }}%;background:{{ dim_colors[d] }}">{{ dim_short[d] }} {{ (w*100)|round(0,'floor')|int }}%</div>
       {% endfor %}
     </div>
-    <p>Speed leads with Google CrUX real-user field data (LCP, INP, CLS) where a store has coverage, falling back to mobile Lighthouse lab scores otherwise, weighted across homepage, collection and product pages. The other five dimensions are detected from each storefront's technology and on-page signals. Each dimension also shows the store's percentile against its own sector. Method and per-store cards in the full report. Prepared by Rainy City Agency.</p>
+    <p class="method">Speed leads with Google CrUX real-user field data (LCP, INP, CLS) where a store has coverage, falling back to mobile Lighthouse lab scores otherwise, weighted across homepage, collection and product pages. The other five dimensions are detected from each storefront's technology and on-page signals. Each dimension also shows the store's percentile against its own sector. Non-Shopify stores are flagged Migrate; Shopify-standard stores of sufficient scale are flagged Plus-ready.</p>
+    <div class="prepared">
+      <svg viewBox="0 0 40 32" aria-hidden="true">
+        <path fill="currentColor" d="M11 1s6 7 6 11a6 6 0 1 1-12 0C5 8 11 1 11 1Z"/>
+        <path fill="currentColor" d="M29 1s6 7 6 11a6 6 0 1 1-12 0C23 8 29 1 29 1Z"/>
+        <path fill="currentColor" d="M20 15s6 7 6 11a6 6 0 1 1-12 0C14 22 20 15 20 15Z"/>
+      </svg>
+      Prepared by Rainy City Agency · rainycityagency.com
+    </div>
   </footer>
 </div>
 <script>
@@ -1031,9 +1074,10 @@ TEMPLATE = r"""<!doctype html>
 </script>
 </body></html>"""
 
+# Brand-aligned dimension colours for the weighting bar (blue-led, amber accents).
 DIM_COLORS = {
-    "speed": "#f0531c", "friction": "#e07b39", "trust": "#3e78c8",
-    "upsell": "#5a3ec8", "value": "#1f8a4c", "ux": "#5c6773",
+    "speed": "#2563EB", "friction": "#1E40AF", "trust": "#60A5FA",
+    "upsell": "#D97706", "value": "#FBBF24", "ux": "#94A3B8",
 }
 
 
@@ -1327,11 +1371,29 @@ ADD_TO_CART_MARKERS = (
     "data-add-to-cart", "add to bag", "add to basket", "product-form__cart",
 )
 
+# Publisher / media / non-ecom fingerprints. If a page looks like a news or
+# content site, reject it even if it has a stray "basket" or "subscribe" word.
+NEWS_MARKERS = (
+    'og:type" content="article', "og:type' content='article",
+    "newsarticle", '"@type":"newsarticle"', '"@type": "newsarticle"',
+    "/opinion/", "/politics/", "breaking news", "subscribe to our newsletter for the latest",
+    "wp-content/themes/newspaper", "td-post-content", "article__body",
+    "read more articles", "latest headlines", "editorial team", "press releases",
+)
+
+
+def looks_like_news(html: str) -> bool:
+    t = (html or "").lower()
+    return any(m in t for m in NEWS_MARKERS)
+
 
 def is_store(html: str, headers=None) -> bool:
     """True only if the page shows a real store footprint: a known ecommerce
-    platform, or an explicit add-to-cart control. Precision over recall."""
+    platform, or an explicit add-to-cart control, and it does NOT read as a
+    news/content site. Precision over recall."""
     t = (html or "").lower()
+    if looks_like_news(t):
+        return False
     if any(m in t for m in PLATFORM_MARKERS):
         return True
     return any(m in t for m in ADD_TO_CART_MARKERS)
@@ -1505,11 +1567,13 @@ def qualify_flags(store, max_rank):
     return store
 
 def main():
+    try: sys.stdout.reconfigure(line_buffering=True)  # live progress in CI logs
+    except Exception: pass
     ap=argparse.ArgumentParser()
     ap.add_argument("--pool", type=int, default=20000)  # Tranco rank ceiling; window is 5,000..min(pool,300,000)
     ap.add_argument("--per-niche", type=int, default=200)
     ap.add_argument("--countries", default="UK,US")
-    ap.add_argument("--workers", type=int, default=16)
+    ap.add_argument("--workers", type=int, default=32)
     ap.add_argument("--upgrade-rank-max", type=int, default=UPGRADE_RANK_MAX)
     ap.add_argument("--out", default="dashboard.html")
     a=ap.parse_args()
@@ -1522,7 +1586,7 @@ def main():
     tranco=load_tranco()
     cands=candidates_from_tranco(tranco, pool=a.pool)
     print("Discovery: scanning %d candidates for %s online stores (any platform)...\n"%(len(cands),"/".join(keep)))
-    found=[]; lock=threading.Lock(); seen=[0]
+    found=[]; review=[]; lock=threading.Lock(); seen=[0]
     def disc(dom):
         try: r=enrich_domain(dom, tranco)
         except Exception: r=None
@@ -1531,8 +1595,9 @@ def main():
             if seen[0]%500==0: print("  scanned %d/%d, kept %d"%(seen[0],len(cands),len(found)))
         if r and r["country"] in keep:
             if r["sector"]=="Unclassified":
-                r["sector"]="Review"   # real store, niche unclear -> surface for review
-            with lock: found.append(r)
+                with lock: review.append(r)   # keep for a side file, NOT the dashboard
+            else:
+                with lock: found.append(r)
         return None
     with ThreadPoolExecutor(max_workers=a.workers) as ex:
         list(ex.map(disc, cands))
@@ -1554,7 +1619,7 @@ def main():
             done[0]+=1
             if done[0]%25==0: print("  scored %d/%d"%(done[0],len(universe)))
         return s
-    with ThreadPoolExecutor(max_workers=max(8,a.workers//2)) as ex:
+    with ThreadPoolExecutor(max_workers=min(8, max(4, a.workers//4))) as ex:  # cap: respect PSI rate limit
         for s in ex.map(work, universe):
             if s: stores.append(qualify_flags(s, max_rank))
     rank_all(stores, None)
@@ -1578,6 +1643,16 @@ def main():
             w=csv.writer(f); w.writerow(["brand","domain","sector","country","traffic_rank","catalogue_band","score","platform"])
             for s in rowsf: w.writerow([s["brand"],s["domain"],s["sector"],s.get("country",""),s.get("rank",""),s.get("catalogue_band",""),s["score"],s["platform"]])
         print("  wrote %s.csv (%d rows)"%(tag,len(rowsf)))
+    # side file: real stores we could not confidently classify (kept OUT of the dashboard)
+    if review:
+        review.sort(key=lambda r: r.get("rank") or 10**9)
+        with open("review_unclassified.csv","w",newline="",encoding="utf-8") as f:
+            w=csv.writer(f); w.writerow(["brand","domain","country","traffic_rank","catalogue_band","n_products"])
+            for r in review: w.writerow([r.get("brand",""),r.get("domain",""),r.get("country",""),r.get("rank",""),r.get("catalogue_band",""),r.get("n_products","")])
+        print("  wrote review_unclassified.csv (%d rows, not shown on dashboard)"%len(review))
+    plat={}
+    for s in scored: plat[s["platform"]]=plat.get(s["platform"],0)+1
+    print("  platform split: "+", ".join("%s=%d"%(k,v) for k,v in sorted(plat.items())))
     print("\nDone. %d scored, %d migrate, %d Plus-ready. Wrote %s + ranking.csv + lead lists"%(len(scored),meta["n_migrate"],meta["n_upgrade"],a.out))
 
 if __name__=="__main__":
