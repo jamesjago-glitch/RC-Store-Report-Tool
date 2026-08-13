@@ -1538,7 +1538,7 @@ def build_store(brand, sector, domain, country, rank, api_key, pause=0.4, extra=
         store["score"]=None; store["dimensions"]={}; return store
     home_html = store.pop("_home_html", None)
     page_html={"home":home_html}
-    for ptype in ("home","collection","pdp"):
+    for ptype in ("home","pdp"):  # 2 pages (home+PDP) not 3 — ~1.5x faster scoring
         page=store["pages"].get(ptype) or {}
         url=page.get("url")
         if not url: continue
@@ -1581,35 +1581,60 @@ def main():
     key=os.environ.get("PSI_API_KEY")
     if not key: print("Set PSI_API_KEY first."); sys.exit(1)
     keep=set(c.strip().upper() for c in a.countries.split(","))
+    START=time.time(); BUDGET=int(os.environ.get("TIME_BUDGET_MIN","330"))*60  # soft cap: always write output
 
-    print("Loading Tranco list...")
-    tranco=load_tranco()
-    cands=candidates_from_tranco(tranco, pool=a.pool)
-    print("Discovery: scanning %d candidates for %s online stores (any platform)...\n"%(len(cands),"/".join(keep)))
-    found=[]; review=[]; lock=threading.Lock(); seen=[0]
-    def disc(dom):
-        try: r=enrich_domain(dom, tranco)
-        except Exception: r=None
-        with lock:
-            seen[0]+=1
-            if seen[0]%500==0: print("  scanned %d/%d, kept %d"%(seen[0],len(cands),len(found)))
-        if r and r["country"] in keep:
-            if r["sector"]=="Unclassified":
-                with lock: review.append(r)   # keep for a side file, NOT the dashboard
-            else:
-                with lock: found.append(r)
-        return None
-    with ThreadPoolExecutor(max_workers=a.workers) as ex:
-        list(ex.map(disc, cands))
-    by_sector={}
-    for r in found: by_sector.setdefault(r["sector"],[]).append(r)
-    universe=[]
-    for sec,g in by_sector.items():
-        g.sort(key=lambda r:r["rank"]); universe.extend(g[:a.per_niche])
-    print("\nDiscovered %d stores across %d niches. Scoring...\n"%(len(universe),len(by_sector)))
+    lock=threading.Lock(); review=[]
+    INPUT=None
+    for _n in ("brands.csv","brands_icp.csv"):
+        if os.path.exists(_n): INPUT=_n; break
+    if INPUT:
+        print("Input list found (%s) - scoring it directly, no discovery."%INPUT)
+        universe=[]
+        for row in csv.DictReader(open(INPUT,encoding="utf-8")):
+            c=(row.get("country") or "").strip().upper()
+            if keep and c not in keep: continue
+            dom=(row.get("domain") or "").strip().lower()
+            dom=re.sub(r'^https?://','',dom); dom=re.sub(r'^www\.','',dom); dom=dom.split('/')[0]
+            if not dom: continue
+            universe.append({"brand":(row.get("brand") or "").strip() or dom,
+                             "sector":(row.get("sector") or "Unclassified").strip() or "Unclassified",
+                             "domain":dom,"country":c or "US","rank":10_000_000})
+        by_sector={}
+        for r in universe: by_sector.setdefault(r["sector"],[]).append(r)
+        max_rank=10**12   # curated list: keep every Plus-ready flag, no traffic-size gate
+        print("Loaded %d stores across %d sectors. Scoring...\n"%(len(universe),len(by_sector)))
+    else:
+        print("Loading Tranco list...")
+        tranco=load_tranco()
+        cands=candidates_from_tranco(tranco, pool=a.pool)
+        print("Discovery: scanning %d candidates for %s online stores (any platform)...\n"%(len(cands),"/".join(keep)))
+        found=[]; seen=[0]
+        def disc(dom):
+            try: r=enrich_domain(dom, tranco)
+            except Exception: r=None
+            with lock:
+                seen[0]+=1
+                if seen[0]%500==0: print("  scanned %d/%d, kept %d"%(seen[0],len(cands),len(found)))
+            if r and r["country"] in keep:
+                if r["sector"]=="Unclassified":
+                    with lock: review.append(r)   # keep for a side file, NOT the dashboard
+                else:
+                    with lock: found.append(r)
+            return None
+        with ThreadPoolExecutor(max_workers=a.workers) as ex:
+            list(ex.map(disc, cands))
+        by_sector={}
+        for r in found: by_sector.setdefault(r["sector"],[]).append(r)
+        universe=[]
+        for sec,g in by_sector.items():
+            g.sort(key=lambda r:r["rank"]); universe.extend(g[:a.per_niche])
+        print("\nDiscovered %d stores across %d niches. Scoring...\n"%(len(universe),len(by_sector)))
 
-    stores=[]; done=[0]
+    stores=[]; done=[0]; skipped=[0]
     def work(r):
+        if time.time()-START > BUDGET:
+            with lock: skipped[0]+=1
+            return None   # time budget hit: stop scoring so we still write outputs
         extra={"catalogue_band":r.get("catalogue_band"),"n_products":r.get("n_products"),
                "country_confidence":r.get("country_confidence"),"sector_basis":r.get("sector_basis"),
                "needs_review":r.get("needs_review"),"review":r.get("review",[])}
@@ -1619,7 +1644,7 @@ def main():
             done[0]+=1
             if done[0]%25==0: print("  scored %d/%d"%(done[0],len(universe)))
         return s
-    with ThreadPoolExecutor(max_workers=min(8, max(4, a.workers//4))) as ex:  # cap: respect PSI rate limit
+    with ThreadPoolExecutor(max_workers=min(16, max(8, a.workers//2))) as ex:  # scoring parallelism (2 pages keeps PSI calls in check)
         for s in ex.map(work, universe):
             if s: stores.append(qualify_flags(s, max_rank))
     rank_all(stores, None)
@@ -1653,6 +1678,7 @@ def main():
     plat={}
     for s in scored: plat[s["platform"]]=plat.get(s["platform"],0)+1
     print("  platform split: "+", ".join("%s=%d"%(k,v) for k,v in sorted(plat.items())))
+    if skipped[0]: print("  NOTE: %d stores skipped (hit the %d-min time budget) - raise TIME_BUDGET_MIN or split the list to score them."%(skipped[0], BUDGET//60))
     print("\nDone. %d scored, %d migrate, %d Plus-ready. Wrote %s + ranking.csv + lead lists"%(len(scored),meta["n_migrate"],meta["n_upgrade"],a.out))
 
 if __name__=="__main__":
